@@ -1,52 +1,27 @@
 package com.github.epsilon.graphics.shaders;
 
-import com.github.epsilon.assets.resources.ResourceLocationUtils;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.Std140Builder;
-import com.mojang.blaze3d.buffers.Std140SizeCalculator;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.github.epsilon.graphics.rhi.LuminRhi;
+import com.github.epsilon.graphics.rhi.LuminRhiUniformBuffer;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
-import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.systems.CommandEncoder;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.resources.Identifier;
-
-import java.util.OptionalInt;
 
 import static com.github.epsilon.Constants.mc;
 
-public class FXAAShader {
+public class FXAAShader implements AutoCloseable {
 
     public static final FXAAShader INSTANCE = new FXAAShader();
 
-    private static final Identifier vertexShader = ResourceLocationUtils.getIdentifier("fullscreen");
-    private static final Identifier fragmentShader = ResourceLocationUtils.getIdentifier("fxaa");
+    private static final int UNIFORMS_SIZE = 16;
 
-    private static final int UNIFORMS_SIZE = new Std140SizeCalculator()
-            .putVec4()
-            .get();
-
-    private RenderPipeline pipeline;
-    private GpuBuffer uniforms;
+    private LuminRhiUniformBuffer uniforms;
     private RenderTarget input;
 
-    private void ensureProgram() {
+    private void ensureResources() {
         if (this.uniforms == null) {
-            this.uniforms = RenderSystem.getDevice().createBuffer(() -> "EpsilonFXAAUniforms", GpuBuffer.USAGE_MAP_WRITE | GpuBuffer.USAGE_UNIFORM, UNIFORMS_SIZE);
-        }
-        if (this.pipeline == null) {
-            this.pipeline = RenderPipeline.builder(RenderPipelines.POST_PROCESSING_SNIPPET)
-                    .withLocation(ResourceLocationUtils.getIdentifier("pipeline/fxaa"))
-                    .withVertexShader(vertexShader)
-                    .withFragmentShader(fragmentShader)
-                    .withUniform("FxaaInfo", UniformType.UNIFORM_BUFFER)
-                    .withSampler("InputSampler")
-                    .withCull(false)
-                    .build();
+            this.uniforms = new LuminRhiUniformBuffer(UNIFORMS_SIZE);
         }
     }
 
@@ -68,7 +43,7 @@ public class FXAAShader {
     }
 
     public void render(RenderTarget framebuffer) {
-        this.ensureProgram();
+        this.ensureResources();
 
         if (framebuffer == null || framebuffer.width <= 0 || framebuffer.height <= 0) {
             return;
@@ -92,21 +67,35 @@ public class FXAAShader {
                 framebuffer.width, framebuffer.height
         );
 
-        try (GpuBuffer.MappedView view = encoder.mapBuffer(this.uniforms, false, true)) {
-            Std140Builder.intoBuffer(view.data())
-                    .putVec4(framebuffer.width, framebuffer.height, 1.0f / framebuffer.width, 1.0f / framebuffer.height);
-        }
+        this.uniforms.clear()
+                .putVec4(framebuffer.width, framebuffer.height, 1.0f / framebuffer.width, 1.0f / framebuffer.height)
+                .upload();
 
-        try (RenderPass renderPass = encoder.createRenderPass(
-                () -> "Epsilon FXAA",
+        LuminRhi rhi = LuminRhi.get();
+        rhi.drawFullscreenTexturedTo(
+                "Epsilon FXAA",
+                rhi.pipelines().fxaa,
+                this.uniforms.buffer(),
+                6,
+                null,
                 framebuffer.getColorTextureView(),
-                OptionalInt.empty()
-        )) {
-            renderPass.setPipeline(this.pipeline);
-            RenderSystem.bindDefaultUniforms(renderPass);
-            renderPass.setUniform("FxaaInfo", this.uniforms);
-            renderPass.bindTexture("InputSampler", this.input.getColorTextureView(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR));
-            renderPass.draw(0, 6);
+                framebuffer.getDepthTextureView(),
+                framebuffer.width,
+                framebuffer.height,
+                this.input.getColorTextureView(),
+                RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR)
+        );
+    }
+
+    @Override
+    public void close() {
+        if (input != null) {
+            input.destroyBuffers();
+            input = null;
+        }
+        if (uniforms != null) {
+            uniforms.close();
+            uniforms = null;
         }
     }
 

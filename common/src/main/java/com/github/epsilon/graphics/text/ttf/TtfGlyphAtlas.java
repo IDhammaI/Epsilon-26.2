@@ -1,18 +1,27 @@
 package com.github.epsilon.graphics.text.ttf;
 
 import com.github.epsilon.graphics.LuminTexture;
-import com.mojang.blaze3d.platform.NativeImage;
+import com.github.epsilon.graphics.rhi.LuminRhi;
+import com.github.epsilon.graphics.rhi.LuminRhiMinecraftTexture;
+import com.github.slmpc.prismrhi.format.RhiExtent3D;
+import com.github.slmpc.prismrhi.format.RhiFormat;
+import com.github.slmpc.prismrhi.resource.RhiFilter;
+import com.github.slmpc.prismrhi.resource.RhiImage;
+import com.github.slmpc.prismrhi.resource.RhiImageCreateInfo;
+import com.github.slmpc.prismrhi.resource.RhiImageUsage;
+import com.github.slmpc.prismrhi.resource.RhiImageView;
+import com.github.slmpc.prismrhi.resource.RhiImageViewCreateInfo;
+import com.github.slmpc.prismrhi.resource.RhiMemoryUsage;
+import com.github.slmpc.prismrhi.resource.RhiSampler;
+import com.github.slmpc.prismrhi.resource.RhiSamplerAddressMode;
+import com.github.slmpc.prismrhi.resource.RhiSamplerCreateInfo;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.AddressMode;
 import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuTexture;
-import com.mojang.blaze3d.textures.TextureFormat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
-import java.util.OptionalDouble;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TtfGlyphAtlas {
@@ -21,8 +30,12 @@ public class TtfGlyphAtlas {
     private static final int GLYPH_GUTTER = 2;
     private static final int UV_INSET = 1;
     private static final AtomicInteger NEXT_TEXTURE_ID = new AtomicInteger();
-    private final LuminTexture texture;
+
     private final Identifier textureId;
+    private final RhiImage image;
+    private final RhiImageView imageView;
+    private final RhiSampler sampler;
+    private final LuminRhiMinecraftTexture minecraftTexture;
 
     private int currentX = 0;
     private int currentY = 0;
@@ -31,49 +44,49 @@ public class TtfGlyphAtlas {
     public TtfGlyphAtlas(int atlasId) {
         this.textureId = Identifier.fromNamespaceAndPath("epsilon", "ttf_atlas/" + NEXT_TEXTURE_ID.getAndIncrement());
 
-        final var texture = RenderSystem.getDevice().createTexture(
-                () -> "Lumin-TtfGlyphAtlas",
-                GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST,
-                TextureFormat.RED8,
-                SIZE, SIZE,
-                1, 1
+        LuminRhi rhi = LuminRhi.get();
+        this.image = rhi.device().createImage(
+                RhiImageCreateInfo.builder(RhiExtent3D.of2D(SIZE, SIZE))
+                        .format(RhiFormat.R8_UNORM)
+                        .usage(RhiImageUsage.SAMPLED)
+                        .usage(RhiImageUsage.TRANSFER_DST)
+                        .memoryUsage(RhiMemoryUsage.GPU_ONLY)
+                        .build()
         );
+        this.imageView = rhi.device().createImageView(RhiImageViewCreateInfo.of(this.image));
+        this.sampler = rhi.device().createSampler(new RhiSamplerCreateInfo(
+                RhiFilter.LINEAR,
+                RhiFilter.LINEAR,
+                RhiSamplerAddressMode.CLAMP_TO_EDGE,
+                RhiSamplerAddressMode.CLAMP_TO_EDGE,
+                RhiSamplerAddressMode.CLAMP_TO_EDGE,
+                0.0f
+        ));
+        fillTextureWithTransparentDistance(rhi);
 
-        final var textureView = RenderSystem.getDevice().createTextureView(texture);
-        final var sampler = RenderSystem.getDevice().createSampler(
-                AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
-                FilterMode.LINEAR, FilterMode.LINEAR,
-                1, OptionalDouble.empty()
+        this.minecraftTexture = new LuminRhiMinecraftTexture(
+                this.image,
+                SIZE,
+                SIZE,
+                RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR)
         );
-
-        this.texture = new LuminTexture(texture, textureView, sampler);
-        fillTextureWithTransparentDistance(texture);
-        Minecraft.getInstance().getTextureManager().register(this.textureId, this.texture);
+        Minecraft.getInstance().getTextureManager().register(this.textureId, this.minecraftTexture.texture());
     }
 
-    private static void fillTextureWithTransparentDistance(GpuTexture texture) {
+    private void fillTextureWithTransparentDistance(LuminRhi rhi) {
         ByteBuffer transparent = MemoryUtil.memAlloc(SIZE * SIZE);
         try {
             MemoryUtil.memSet(MemoryUtil.memAddress(transparent), 0xFF, SIZE * SIZE);
-            RenderSystem.getDevice().createCommandEncoder().writeToTexture(
-                    texture,
-                    transparent,
-                    NativeImage.Format.LUMINANCE,
-                    0,
-                    0,
-                    0, 0,
-                    SIZE,
-                    SIZE
-            );
+            rhi.uploadImageRegion(this.image, 0, 0, SIZE, SIZE, transparent);
         } finally {
             MemoryUtil.memFree(transparent);
         }
     }
 
     /**
-     * Try to append a glyph to atlas
+     * 尝试把 glyph 追加到图集。
      * <p>
-     * Return null if glyph atlas is full
+     * 图集已满时返回 null。
      */
     public GlyphUV appendGlyph(TtfGlyph glyph) {
         if (glyph.glyphData() == null) return null;
@@ -87,7 +100,7 @@ public class TtfGlyphAtlas {
             currentRowHeight = 0;
         }
 
-        // Return null if glyph atlas is full
+        // 图集空间不足时返回 null。
         if (currentY + cellHeight >= SIZE) {
             return null;
         }
@@ -95,16 +108,7 @@ public class TtfGlyphAtlas {
         int glyphX = currentX + GLYPH_GUTTER;
         int glyphY = currentY + GLYPH_GUTTER;
 
-        RenderSystem.getDevice().createCommandEncoder().writeToTexture(
-                this.texture.getTexture(),
-                glyph.glyphData(),
-                NativeImage.Format.LUMINANCE,
-                0,
-                0,
-                glyphX, glyphY,
-                glyph.width(),
-                glyph.height()
-        );
+        LuminRhi.get().uploadImageRegion(this.image, glyphX, glyphY, glyph.width(), glyph.height(), glyph.glyphData());
 
         GlyphUV uv = new GlyphUV(
                 (float) (glyphX + UV_INSET) / SIZE,
@@ -119,8 +123,16 @@ public class TtfGlyphAtlas {
         return uv;
     }
 
+    public RhiImageView getRhiImageView() {
+        return imageView;
+    }
+
+    public RhiSampler getRhiSampler() {
+        return sampler;
+    }
+
     public LuminTexture getTexture() {
-        return texture;
+        return minecraftTexture.texture();
     }
 
     public Identifier getTextureId() {
@@ -129,6 +141,10 @@ public class TtfGlyphAtlas {
 
     public void destroy() {
         Minecraft.getInstance().getTextureManager().release(this.textureId);
+        this.minecraftTexture.close();
+        this.sampler.close();
+        this.imageView.close();
+        this.image.close();
     }
 
     public record GlyphUV(float u0, float v0, float u1, float v1) {

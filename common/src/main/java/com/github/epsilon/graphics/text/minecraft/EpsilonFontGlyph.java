@@ -11,8 +11,10 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.font.GlyphRenderTypes;
 import net.minecraft.client.gui.font.TextRenderable;
 import net.minecraft.client.gui.font.glyphs.BakedGlyph;
+import net.minecraft.client.renderer.rendertype.LayeringTransform;
 import net.minecraft.client.renderer.rendertype.RenderSetup;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.network.chat.Style;
@@ -27,8 +29,8 @@ public final class EpsilonFontGlyph implements BakedGlyph {
     private static final float SHADOW_OFFSET = 0.45f;
     private static final float BOLD_OFFSET = 0.45f;
 
-    private static final Map<TtfGlyphAtlas, RenderType> AA_RENDER_TYPES = new IdentityHashMap<>();
-    private static final Map<TtfGlyphAtlas, RenderType> NO_AA_RENDER_TYPES = new IdentityHashMap<>();
+    private static final Map<TtfGlyphAtlas, GlyphRenderTypes> AA_RENDER_TYPES = new IdentityHashMap<>();
+    private static final Map<TtfGlyphAtlas, GlyphRenderTypes> NO_AA_RENDER_TYPES = new IdentityHashMap<>();
 
     private final int codepoint;
     private final TtfFontLoader font;
@@ -74,22 +76,35 @@ public final class EpsilonFontGlyph implements BakedGlyph {
         return new GlyphInstance(this, x, y, color, shadowColor, style, boldOffset, shadowOffset);
     }
 
-    private RenderType renderType() {
+    private RenderType renderType(Font.DisplayMode displayMode) {
         if (this.descriptor == null) {
             throw new IllegalStateException("Whitespace glyphs do not have render types");
         }
-        Map<TtfGlyphAtlas, RenderType> renderTypes = ClientSetting.INSTANCE.fontAntiAliasing.getValue() ? AA_RENDER_TYPES : NO_AA_RENDER_TYPES;
+        Map<TtfGlyphAtlas, GlyphRenderTypes> renderTypes = ClientSetting.INSTANCE.fontAntiAliasing.getValue() ? AA_RENDER_TYPES : NO_AA_RENDER_TYPES;
         RenderPipeline pipeline = ClientSetting.INSTANCE.fontAntiAliasing.getValue()
                 ? LuminRenderPipelines.TTF_FONT_AA
                 : LuminRenderPipelines.TTF_FONT_NO_AA;
         String name = ClientSetting.INSTANCE.fontAntiAliasing.getValue() ? "epsilon_ttf_text_aa" : "epsilon_ttf_text_no_aa";
-        return renderTypes.computeIfAbsent(this.descriptor.atlas(), atlas -> RenderType.create(
-                name,
-                RenderSetup.builder(pipeline)
-                        .withTexture("Sampler0", atlas.getTextureId(), () -> atlas.getTexture().getSampler())
-                        .bufferSize(RenderType.SMALL_BUFFER_SIZE)
-                        .createRenderSetup()
-        ));
+        return renderTypes.computeIfAbsent(this.descriptor.atlas(), atlas -> new GlyphRenderTypes(
+                createRenderType(name, pipeline, atlas, false, false),
+                createRenderType(name + "_see_through", pipeline, atlas, false, false),
+                createRenderType(name + "_polygon_offset", pipeline, atlas, true, true),
+                pipeline
+        )).select(displayMode);
+    }
+
+    private static RenderType createRenderType(String name, RenderPipeline pipeline, TtfGlyphAtlas atlas, boolean sortOnUpload, boolean polygonOffset) {
+        RenderSetup.RenderSetupBuilder builder = RenderSetup.builder(pipeline)
+                .withTexture("Sampler0", atlas.getTextureId(), () -> atlas.getTexture().getSampler())
+                .useLightmap()
+                .bufferSize(RenderType.SMALL_BUFFER_SIZE);
+        if (sortOnUpload) {
+            builder.sortOnUpload();
+        }
+        if (polygonOffset) {
+            builder.setLayeringTransform(LayeringTransform.VIEW_OFFSET_Z_LAYERING);
+        }
+        return RenderType.create(name, builder.createRenderSetup());
     }
 
     private float baselineY(float y) {
@@ -186,7 +201,7 @@ public final class EpsilonFontGlyph implements BakedGlyph {
 
         @Override
         public RenderType renderType(Font.DisplayMode displayMode) {
-            return this.glyph.renderType();
+            return this.glyph.renderType(displayMode);
         }
 
         @Override

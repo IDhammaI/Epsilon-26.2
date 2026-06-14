@@ -55,6 +55,7 @@ java {
 }
 
 repositories {
+    mavenLocal()
     mavenCentral()
     exclusiveContent {
         forRepository {

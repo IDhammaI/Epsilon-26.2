@@ -28,6 +28,9 @@ val extractedSodiumNeoForgeModJar = files(
 ).builtBy(extractSodiumNeoForgeModJar)
 
 dependencies {
+    implementation(libs.prism.rhi.core)
+    runtimeOnly(libs.prism.rhi.backend.opengl41)
+    runtimeOnly(libs.prism.rhi.backend.opengl.dsa)
     compileOnly(libs.sodium.neoforge)
     sodiumNeoForgeOuterJar(libs.sodium.neoforge)
     compileOnly(extractedSodiumNeoForgeModJar)

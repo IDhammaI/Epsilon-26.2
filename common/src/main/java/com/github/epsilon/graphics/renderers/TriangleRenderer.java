@@ -1,30 +1,21 @@
 package com.github.epsilon.graphics.renderers;
 
 import com.github.epsilon.assets.holders.RendererHolder;
-import com.github.epsilon.graphics.LuminRenderPipelines;
 import com.github.epsilon.graphics.LuminRenderSystem;
-import com.github.epsilon.graphics.buffer.LuminRingBuffer;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import net.minecraft.client.renderer.rendertype.TextureTransform;
+import com.github.epsilon.graphics.rhi.LuminRhi;
+import com.github.epsilon.graphics.rhi.LuminRhiBuffer;
+import com.github.slmpc.prismrhi.resource.RhiBufferUsage;
 import net.minecraft.util.ARGB;
-import org.joml.Vector3f;
-import org.joml.Vector4f;
 import org.lwjgl.system.MemoryUtil;
 
 import java.awt.*;
-import java.util.OptionalDouble;
-import java.util.OptionalInt;
 
 public class TriangleRenderer implements IRenderer {
 
     private static final long BUFFER_SIZE = 64 * 1024;
     private static final int STRIDE = 16;
 
-    private final LuminRingBuffer buffer = new LuminRingBuffer(BUFFER_SIZE, GpuBuffer.USAGE_VERTEX);
+    private final LuminRhiBuffer buffer = new LuminRhiBuffer(BUFFER_SIZE, RhiBufferUsage.VERTEX_BUFFER);
 
     private long currentOffset = 0;
     private int vertexCount = 0;
@@ -109,45 +100,15 @@ public class TriangleRenderer implements IRenderer {
     public void draw() {
         if (vertexCount == 0) return;
 
-        if (buffer.isMapped()) {
-            buffer.unmap();
-        }
-
-        LuminRenderSystem.applyOrthoProjection();
-
-        GpuTextureView colorView = LuminRenderSystem.resolveColorView();
-        GpuTextureView depthView = LuminRenderSystem.resolveDepthView();
-        if (colorView == null) return;
-
-        GpuBufferSlice dynamicUniforms = LuminRenderSystem.writeTransform(
-                RenderSystem.getModelViewMatrix(),
-                new Vector4f(1, 1, 1, 1),
-                new Vector3f(0, 0, 0),
-                TextureTransform.DEFAULT_TEXTURING.getMatrix()
-        );
-
-        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "Triangle Draw",
-                colorView, OptionalInt.empty(),
-                depthView, OptionalDouble.empty())
-        ) {
-            pass.setPipeline(LuminRenderPipelines.TRIANGLE);
-            if (scissorEnabled) {
-                pass.enableScissor(scissorX, scissorY, scissorW, scissorH);
-            }
-            RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform("DynamicTransforms", dynamicUniforms);
-            pass.setVertexBuffer(0, buffer.getGpuBuffer());
-            pass.draw(0, vertexCount);
-        }
+        buffer.upload(currentOffset);
+        LuminRenderSystem.ScissorRect scissor = scissorEnabled ? new LuminRenderSystem.ScissorRect(scissorX, scissorY, scissorW, scissorH) : null;
+        LuminRhi rhi = LuminRhi.get();
+        rhi.drawVertices("Triangle Draw", rhi.pipelines().triangle, buffer.getGpuBuffer(), vertexCount, scissor);
     }
 
     @Override
     public void clear() {
         if (vertexCount > 0) {
-            if (buffer.isMapped()) {
-                buffer.unmap();
-            }
             buffer.rotate();
         }
 

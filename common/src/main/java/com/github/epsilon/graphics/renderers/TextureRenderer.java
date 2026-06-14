@@ -2,31 +2,24 @@ package com.github.epsilon.graphics.renderers;
 
 import com.github.epsilon.assets.holders.RendererHolder;
 import com.github.epsilon.assets.holders.TextureCacheHolder;
-import com.github.epsilon.graphics.LuminRenderPipelines;
-import com.github.epsilon.graphics.LuminRenderSystem;
 import com.github.epsilon.graphics.LuminTexture;
-import com.github.epsilon.graphics.buffer.LuminRingBuffer;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.github.epsilon.graphics.LuminRenderSystem;
+import com.github.epsilon.graphics.rhi.LuminRhi;
+import com.github.epsilon.graphics.rhi.LuminRhiBuffer;
+import com.github.slmpc.prismrhi.resource.RhiBufferUsage;
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.*;
-import net.minecraft.client.renderer.rendertype.TextureTransform;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
-import org.joml.Vector3f;
-import org.joml.Vector4f;
 import org.lwjgl.system.MemoryUtil;
 
 import java.awt.*;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.OptionalDouble;
-import java.util.OptionalInt;
 
 import static com.github.epsilon.Constants.mc;
 
@@ -88,12 +81,10 @@ public class TextureRenderer implements IRenderer {
 
     private void addRoundedTexture(Object textureKey, float x, float y, float width, float height, float rTL, float rTR, float rBR, float rBL, float u0, float v0, float u1, float v1, Color color, boolean useLinearFilter) {
         Batch batch = batches.computeIfAbsent(textureKey, k -> {
-            Batch b = new Batch(new LuminRingBuffer(BUFFER_SIZE, GpuBuffer.USAGE_VERTEX));
+            Batch b = new Batch(new LuminRhiBuffer(BUFFER_SIZE, RhiBufferUsage.VERTEX_BUFFER));
             b.useLinearFilter = useLinearFilter;
             return b;
         });
-
-        batch.buffer.tryMap();
 
         if (batch.currentOffset + (long) STRIDE * 4L > BUFFER_SIZE) {
             return;
@@ -138,29 +129,12 @@ public class TextureRenderer implements IRenderer {
     public void draw() {
         if (batches.isEmpty()) return;
 
-        LuminRenderSystem.applyOrthoProjection();
-
-        GpuTextureView colorView = LuminRenderSystem.resolveColorView();
-        if (colorView == null) return;
-
-        GpuBufferSlice dynamicUniforms = LuminRenderSystem.writeTransform(
-                RenderSystem.getModelViewMatrix(),
-                new Vector4f(1, 1, 1, 1),
-                new Vector3f(0, 0, 0),
-                TextureTransform.DEFAULT_TEXTURING.getMatrix()
-        );
+        LuminRhi rhi = LuminRhi.get();
 
         for (Map.Entry<Object, Batch> entry : batches.entrySet()) {
             Object textureKey = entry.getKey();
             Batch batch = entry.getValue();
             if (batch.vertexCount == 0) continue;
-
-            if (batch.buffer.isMapped()) {
-                batch.buffer.unmap();
-            }
-
-            int indexCount = (batch.vertexCount / 4) * 6;
-            GpuBuffer ibo = LuminRenderSystem.getQuadIndexBuffer(indexCount);
 
             LuminTexture texture;
             if (textureKey instanceof Identifier id) {
@@ -173,23 +147,16 @@ public class TextureRenderer implements IRenderer {
                 continue;
             }
 
-            try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                    () -> "Rounded Texture Draw",
-                    colorView, OptionalInt.empty(),
-                    null, OptionalDouble.empty())
-            ) {
-                pass.setPipeline(LuminRenderPipelines.TEXTURE);
-
-                RenderSystem.bindDefaultUniforms(pass);
-                pass.setUniform("DynamicTransforms", dynamicUniforms);
-
-                // 使用 RingBuffer 当前指向的 GpuBuffer
-                pass.setVertexBuffer(0, batch.buffer.getGpuBuffer());
-                pass.setIndexBuffer(ibo, LuminRenderSystem.getQuadIndexType());
-                pass.bindTexture("Sampler0", texture.getTextureView(), texture.getSampler());
-
-                pass.drawIndexed(0, 0, indexCount, 1);
-            }
+            batch.buffer.upload(batch.currentOffset);
+            rhi.drawTexturedQuads(
+                    "Rounded Texture Draw",
+                    rhi.pipelines().texture,
+                    batch.buffer.getGpuBuffer(),
+                    batch.vertexCount,
+                    null,
+                    texture.getTextureView(),
+                    texture.getSampler()
+            );
         }
     }
 
@@ -231,9 +198,6 @@ public class TextureRenderer implements IRenderer {
     public void clear() {
         for (Batch batch : batches.values()) {
             if (batch.vertexCount > 0) {
-                if (batch.buffer.isMapped()) {
-                    batch.buffer.unmap();
-                }
                 batch.buffer.rotate();
             }
             batch.currentOffset = 0;
@@ -252,12 +216,12 @@ public class TextureRenderer implements IRenderer {
     }
 
     private static final class Batch {
-        final LuminRingBuffer buffer;
+        final LuminRhiBuffer buffer;
         long currentOffset = 0;
         int vertexCount = 0;
         boolean useLinearFilter;
 
-        private Batch(LuminRingBuffer buffer) {
+        private Batch(LuminRhiBuffer buffer) {
             this.buffer = buffer;
         }
     }

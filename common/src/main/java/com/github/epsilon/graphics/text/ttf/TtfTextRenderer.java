@@ -1,28 +1,19 @@
 package com.github.epsilon.graphics.text.ttf;
 
-import com.github.epsilon.graphics.LuminRenderPipelines;
 import com.github.epsilon.graphics.LuminRenderSystem;
 import com.github.epsilon.graphics.buffer.BufferUtils;
-import com.github.epsilon.graphics.buffer.LuminRingBuffer;
+import com.github.epsilon.graphics.rhi.LuminRhi;
+import com.github.epsilon.graphics.rhi.LuminRhiBuffer;
 import com.github.epsilon.graphics.text.GlyphDescriptor;
 import com.github.epsilon.graphics.text.ITextRenderer;
 import com.github.epsilon.modules.impl.ClientSetting;
-import com.mojang.blaze3d.buffers.GpuBuffer;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import net.minecraft.client.renderer.rendertype.TextureTransform;
+import com.github.slmpc.prismrhi.resource.RhiBufferUsage;
 import net.minecraft.util.ARGB;
-import org.joml.Vector3f;
-import org.joml.Vector4f;
 import org.lwjgl.system.MemoryUtil;
 
 import java.awt.*;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.OptionalDouble;
-import java.util.OptionalInt;
 
 public class TtfTextRenderer implements ITextRenderer {
 
@@ -67,12 +58,15 @@ public class TtfTextRenderer implements ITextRenderer {
             }
 
             GlyphDescriptor glyph = fontLoader.getGlyph(ch);
+            if (glyph == null) {
+                fontLoader.checkAndLoadChar(ch);
+                glyph = fontLoader.getGlyph(ch);
+            }
             if (glyph == null) continue;
 
             TtfGlyphAtlas atlas = glyph.atlas();
 
-            Batch batch = batches.computeIfAbsent(atlas, k -> new Batch(new LuminRingBuffer(bufferSize, GpuBuffer.USAGE_VERTEX)));
-            batch.buffer.tryMap();
+            Batch batch = batches.computeIfAbsent(atlas, k -> new Batch(new LuminRhiBuffer(bufferSize, RhiBufferUsage.VERTEX_BUFFER)));
 
             float baselineY = yOffset + y + (fontLoader.fontFile.pixelAscent * finalScale);
             float x1 = x + xOffset;
@@ -97,16 +91,7 @@ public class TtfTextRenderer implements ITextRenderer {
     public void draw() {
         if (batches.isEmpty()) return;
 
-        LuminRenderSystem.applyOrthoProjection();
-
-        GpuTextureView colorView = LuminRenderSystem.resolveColorView();
-        GpuTextureView depthView = LuminRenderSystem.resolveDepthView();
-        if (colorView == null) return;
-
-        GpuBufferSlice dynamicUniforms = LuminRenderSystem.writeTransform(
-                RenderSystem.getModelViewMatrix(), new Vector4f(1, 1, 1, 1),
-                new Vector3f(0, 0, 0), TextureTransform.DEFAULT_TEXTURING.getMatrix()
-        );
+        LuminRhi rhi = LuminRhi.get();
 
         for (Map.Entry<TtfGlyphAtlas, Batch> entry : batches.entrySet()) {
             final var atlas = entry.getKey();
@@ -114,36 +99,19 @@ public class TtfTextRenderer implements ITextRenderer {
 
             if (batch.offsetInAtlas == 0) continue;
 
-            if (batch.buffer.isMapped()) {
-                batch.buffer.unmap();
-            }
-
             int vertexCount = (int) (batch.offsetInAtlas / STRIDE);
-            int indexCount = (vertexCount / 4) * 6;
+            batch.buffer.upload(batch.offsetInAtlas);
 
-            GpuBuffer ibo = LuminRenderSystem.getQuadIndexBuffer(indexCount);
-
-            try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                    () -> "Lumin TTF Draw",
-                    colorView, OptionalInt.empty(),
-                    depthView, OptionalDouble.empty())
-            ) {
-                pass.setPipeline(ClientSetting.INSTANCE.fontAntiAliasing.getValue()
-                        ? LuminRenderPipelines.TTF_FONT_AA
-                        : LuminRenderPipelines.TTF_FONT_NO_AA);
-                if (scissorEnabled) {
-                    pass.enableScissor(scissorX, scissorY, scissorW, scissorH);
-                }
-
-                RenderSystem.bindDefaultUniforms(pass);
-                pass.setUniform("DynamicTransforms", dynamicUniforms);
-
-                pass.setVertexBuffer(0, batch.buffer.getGpuBuffer());
-                pass.setIndexBuffer(ibo, LuminRenderSystem.getQuadIndexType());
-                pass.bindTexture("Sampler0", atlas.getTexture().getTextureView(), atlas.getTexture().getSampler());
-
-                pass.drawIndexed(0, 0, indexCount, 1);
-            }
+            LuminRenderSystem.ScissorRect scissor = scissorEnabled ? new LuminRenderSystem.ScissorRect(scissorX, scissorY, scissorW, scissorH) : null;
+            rhi.drawTexturedQuads(
+                    "Lumin TTF Draw",
+                    ClientSetting.INSTANCE.fontAntiAliasing.getValue() ? rhi.pipelines().ttfAa : rhi.pipelines().ttfNoAa,
+                    batch.buffer.getGpuBuffer(),
+                    vertexCount,
+                    scissor,
+                    atlas.getRhiImageView(),
+                    atlas.getRhiSampler()
+            );
         }
     }
 
@@ -151,9 +119,6 @@ public class TtfTextRenderer implements ITextRenderer {
     public void clear() {
         for (Batch batch : batches.values()) {
             if (batch.offsetInAtlas > 0) {
-                if (batch.buffer.isMapped()) {
-                    batch.buffer.unmap();
-                }
                 batch.buffer.rotate();
             }
             batch.offsetInAtlas = 0;
@@ -217,10 +182,10 @@ public class TtfTextRenderer implements ITextRenderer {
     }
 
     private static final class Batch {
-        final LuminRingBuffer buffer;
+        final LuminRhiBuffer buffer;
         long offsetInAtlas = 0;
 
-        private Batch(LuminRingBuffer buffer) {
+        private Batch(LuminRhiBuffer buffer) {
             this.buffer = buffer;
         }
     }

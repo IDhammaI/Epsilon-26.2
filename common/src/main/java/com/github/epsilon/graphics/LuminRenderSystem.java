@@ -3,6 +3,11 @@ package com.github.epsilon.graphics;
 import com.github.epsilon.assets.holders.RenderTargetHolder;
 import com.github.epsilon.assets.holders.RendererHolder;
 import com.github.epsilon.assets.resources.ResourceLocationUtils;
+import com.github.epsilon.graphics.rhi.LuminRhi;
+import com.github.epsilon.graphics.shaders.BlurShader;
+import com.github.epsilon.graphics.shaders.FXAAShader;
+import com.github.epsilon.graphics.shaders.FilterShader;
+import com.github.epsilon.graphics.shaders.GlslSandBox;
 import com.github.epsilon.modules.impl.ClientSetting;
 import com.mojang.blaze3d.ProjectionType;
 import com.mojang.blaze3d.buffers.GpuBuffer;
@@ -38,9 +43,14 @@ public class LuminRenderSystem {
     }
 
     public static void destroyAll() {
+        BlurShader.INSTANCE.close();
+        FXAAShader.INSTANCE.close();
+        FilterShader.INSTANCE.close();
+        GlslSandBox.INSTANCE.close();
         guiProjectionMatrixBuffer.close();
         RenderTargetHolder.INSTANCE.destroyAll();
         RendererHolder.INSTANCE.destroyAll();
+        LuminRhi.destroy();
     }
 
     @Nullable
@@ -117,15 +127,21 @@ public class LuminRenderSystem {
         return toFramebufferScissor(x, y, width, height, (float) guiHeight);
     }
 
-    public static void applyOrthoProjection() {
+    public static void withOrthoProjection(Runnable action) {
+        RenderSystem.backupProjectionMatrix();
         guiOrthoProjection
                 .setupOrtho(-1000.0F, 1000.0F,
                         getScaledWidth(),
                         getScaledHeight(),
                         true
                 );
-        RenderSystem.setProjectionMatrix(
-                guiProjectionMatrixBuffer.getBuffer(guiOrthoProjection), ProjectionType.ORTHOGRAPHIC);
+        try {
+            RenderSystem.setProjectionMatrix(
+                    guiProjectionMatrixBuffer.getBuffer(guiOrthoProjection), ProjectionType.ORTHOGRAPHIC);
+            action.run();
+        } finally {
+            RenderSystem.restoreProjectionMatrix();
+        }
     }
 
     /**
@@ -144,23 +160,27 @@ public class LuminRenderSystem {
     }
 
     public static QuadRenderingInfo prepareQuadRendering(int vertexCount) {
-        LuminRenderSystem.applyOrthoProjection();
+        final QuadRenderingInfo[] result = new QuadRenderingInfo[1];
+        withOrthoProjection(() -> {
+            GpuTextureView colorView = resolveColorView();
+            GpuTextureView depthView = resolveDepthView();
+            if (colorView == null) {
+                return;
+            }
 
-        GpuTextureView colorView = resolveColorView();
-        GpuTextureView depthView = resolveDepthView();
-        if (colorView == null) return null;
+            final var indexCount = vertexCount / 4 * 6;
+            GpuBuffer ibo = getQuadIndexBuffer(indexCount);
 
-        final var indexCount = vertexCount / 4 * 6;
-        GpuBuffer ibo = getQuadIndexBuffer(indexCount);
+            GpuBufferSlice dynamicUniforms = writeTransform(
+                    RenderSystem.getModelViewMatrix(),
+                    new Vector4f(1, 1, 1, 1),
+                    new Vector3f(0, 0, 0),
+                    TextureTransform.DEFAULT_TEXTURING.getMatrix()
+            );
 
-        GpuBufferSlice dynamicUniforms = writeTransform(
-                RenderSystem.getModelViewMatrix(),
-                new Vector4f(1, 1, 1, 1),
-                new Vector3f(0, 0, 0),
-                TextureTransform.DEFAULT_TEXTURING.getMatrix()
-        );
-
-        return new QuadRenderingInfo(colorView, depthView, getQuadIndexType(), ibo, indexCount, dynamicUniforms);
+            result[0] = new QuadRenderingInfo(colorView, depthView, getQuadIndexType(), ibo, indexCount, dynamicUniforms);
+        });
+        return result[0];
     }
 
     public static GpuBuffer getQuadIndexBuffer(int indexCount) {

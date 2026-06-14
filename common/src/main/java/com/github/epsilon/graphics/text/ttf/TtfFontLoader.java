@@ -1,5 +1,6 @@
 package com.github.epsilon.graphics.text.ttf;
 
+import com.github.epsilon.Constants;
 import com.github.epsilon.graphics.text.GlyphDescriptor;
 import com.github.epsilon.graphics.text.IFontLoader;
 import net.minecraft.resources.Identifier;
@@ -7,8 +8,10 @@ import org.lwjgl.stb.STBTruetype;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,6 +34,7 @@ public class TtfFontLoader implements IFontLoader {
 
     private final HashMap<Character, GlyphDescriptor> glyphMap = new HashMap<>();
     private final HashMap<Character, CompletableFuture<TtfGlyph>> pendingGlyphs = new HashMap<>();
+    private final Set<Character> missingGlyphs = new HashSet<>();
     private final List<TtfGlyphAtlas> atlases = new ArrayList<>();
 
     private TtfGlyphAtlas currentAtlas;
@@ -42,7 +46,7 @@ public class TtfFontLoader implements IFontLoader {
 
     @Override
     public void checkAndLoadChar(char ch) {
-        if (glyphMap.containsKey(ch)) return;
+        if (glyphMap.containsKey(ch) || missingGlyphs.contains(ch)) return;
 
         CompletableFuture<TtfGlyph> pending = pendingGlyphs.remove(ch);
         TtfGlyph glyph;
@@ -59,7 +63,7 @@ public class TtfFontLoader implements IFontLoader {
 
         for (int i = 0; i < chars.length(); i++) {
             char ch = chars.charAt(i);
-            if (ch == ' ' || ch == '\n' || glyphMap.containsKey(ch) || pendingGlyphs.containsKey(ch)) {
+            if (ch == ' ' || ch == '\n' || glyphMap.containsKey(ch) || missingGlyphs.contains(ch) || pendingGlyphs.containsKey(ch)) {
                 continue;
             }
 
@@ -95,20 +99,27 @@ public class TtfFontLoader implements IFontLoader {
     }
 
     private void appendGlyph(char ch, TtfGlyph glyph) {
-        if (glyph == null || glyph.glyphData() == null) return;
+        if (glyph == null || glyph.glyphData() == null) {
+            missingGlyphs.add(ch);
+            return;
+        }
 
         if (currentAtlas == null) {
             createNewAtlas();
         }
 
-        TtfGlyphAtlas.GlyphUV uv = currentAtlas.appendGlyph(glyph);
-
-        if (uv == null) {
-            createNewAtlas();
+        TtfGlyphAtlas.GlyphUV uv = null;
+        for (int attempt = 0; attempt < 2 && uv == null; attempt++) {
             uv = currentAtlas.appendGlyph(glyph);
+            if (uv == null && attempt == 0) {
+                createNewAtlas();
+            }
         }
 
-        if (uv != null) {
+        if (uv == null) {
+            Constants.LOGGER.warn("Failed to place TTF glyph U+{} ({}x{}) into atlas", String.format("%04X", (int) ch), glyph.width(), glyph.height());
+            missingGlyphs.add(ch);
+        } else {
             glyphMap.put(ch, new GlyphDescriptor(
                     currentAtlas, uv,
                     glyph.width(), glyph.height(),
@@ -142,6 +153,7 @@ public class TtfFontLoader implements IFontLoader {
         }
         atlases.clear();
         glyphMap.clear();
+        missingGlyphs.clear();
         for (CompletableFuture<TtfGlyph> future : pendingGlyphs.values()) {
             if (future.isDone() && !future.isCompletedExceptionally() && !future.isCancelled()) {
                 freeGlyph(future.join());

@@ -100,8 +100,7 @@ public class TextRenderer implements IRenderer {
 
     @Override
     public void draw() {
-        LuminRenderSystem.applyOrthoProjection();
-        textRenderer.draw();
+        LuminRenderSystem.withOrthoProjection(textRenderer::draw);
     }
 
     @Override

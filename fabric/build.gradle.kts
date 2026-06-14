@@ -9,6 +9,9 @@ dependencies {
     minecraft(libs.minecraft)
     implementation(libs.fabric.loader)
     implementation(libs.fabric.api)
+    implementation(libs.prism.rhi.core)
+    runtimeOnly(libs.prism.rhi.backend.opengl41)
+    runtimeOnly(libs.prism.rhi.backend.opengl.dsa)
     compileOnly(libs.sodium.fabric)
     compileOnly(libs.jsr305)
 }
