@@ -32,9 +32,9 @@ public class TtfFontLoader implements IFontLoader {
 
     public final TtfFontFile fontFile;
 
-    private final HashMap<Character, GlyphDescriptor> glyphMap = new HashMap<>();
-    private final HashMap<Character, CompletableFuture<TtfGlyph>> pendingGlyphs = new HashMap<>();
-    private final Set<Character> missingGlyphs = new HashSet<>();
+    private final HashMap<Integer, GlyphDescriptor> glyphMap = new HashMap<>();
+    private final HashMap<Integer, CompletableFuture<TtfGlyph>> pendingGlyphs = new HashMap<>();
+    private final Set<Integer> missingGlyphs = new HashSet<>();
     private final List<TtfGlyphAtlas> atlases = new ArrayList<>();
 
     private TtfGlyphAtlas currentAtlas;
@@ -46,28 +46,36 @@ public class TtfFontLoader implements IFontLoader {
 
     @Override
     public void checkAndLoadChar(char ch) {
-        if (glyphMap.containsKey(ch) || missingGlyphs.contains(ch)) return;
+        checkAndLoadCodepoint(ch);
+    }
 
-        CompletableFuture<TtfGlyph> pending = pendingGlyphs.remove(ch);
+    public void checkAndLoadCodepoint(int codepoint) {
+        if (glyphMap.containsKey(codepoint) || missingGlyphs.contains(codepoint)) return;
+
+        CompletableFuture<TtfGlyph> pending = pendingGlyphs.remove(codepoint);
         TtfGlyph glyph;
         try {
-            glyph = pending != null ? pending.join() : fontFile.generateGlyph(ch);
+            glyph = pending != null ? pending.join() : fontFile.generateGlyph(codepoint);
         } catch (RuntimeException ignored) {
-            glyph = fontFile.generateGlyph(ch);
+            glyph = fontFile.generateGlyph(codepoint);
         }
-        appendGlyph(ch, glyph);
+        appendGlyph(codepoint, glyph);
     }
 
     public void requestChars(String chars) {
         drainReadyGlyphs();
 
-        for (int i = 0; i < chars.length(); i++) {
-            char ch = chars.charAt(i);
-            if (ch == ' ' || ch == '\n' || glyphMap.containsKey(ch) || missingGlyphs.contains(ch) || pendingGlyphs.containsKey(ch)) {
+        for (int i = 0; i < chars.length(); ) {
+            int codepoint = chars.codePointAt(i);
+            i += Character.charCount(codepoint);
+            if (codepoint == ' ' || codepoint == '\n'
+                    || glyphMap.containsKey(codepoint)
+                    || missingGlyphs.contains(codepoint)
+                    || pendingGlyphs.containsKey(codepoint)) {
                 continue;
             }
 
-            pendingGlyphs.put(ch, CompletableFuture.supplyAsync(() -> fontFile.generateGlyph(ch), GLYPH_WORKER));
+            pendingGlyphs.put(codepoint, CompletableFuture.supplyAsync(() -> fontFile.generateGlyph(codepoint), GLYPH_WORKER));
         }
     }
 
@@ -76,31 +84,31 @@ public class TtfFontLoader implements IFontLoader {
             return;
         }
 
-        List<Character> readyChars = null;
-        for (Map.Entry<Character, CompletableFuture<TtfGlyph>> entry : pendingGlyphs.entrySet()) {
+        List<Integer> readyCodepoints = null;
+        for (Map.Entry<Integer, CompletableFuture<TtfGlyph>> entry : pendingGlyphs.entrySet()) {
             if (entry.getValue().isDone()) {
-                if (readyChars == null) {
-                    readyChars = new ArrayList<>();
+                if (readyCodepoints == null) {
+                    readyCodepoints = new ArrayList<>();
                 }
-                readyChars.add(entry.getKey());
+                readyCodepoints.add(entry.getKey());
             }
         }
 
-        if (readyChars == null) {
+        if (readyCodepoints == null) {
             return;
         }
 
-        for (char ch : readyChars) {
-            CompletableFuture<TtfGlyph> future = pendingGlyphs.remove(ch);
+        for (int codepoint : readyCodepoints) {
+            CompletableFuture<TtfGlyph> future = pendingGlyphs.remove(codepoint);
             if (future != null && !future.isCompletedExceptionally() && !future.isCancelled()) {
-                appendGlyph(ch, future.join());
+                appendGlyph(codepoint, future.join());
             }
         }
     }
 
-    private void appendGlyph(char ch, TtfGlyph glyph) {
+    private void appendGlyph(int codepoint, TtfGlyph glyph) {
         if (glyph == null || glyph.glyphData() == null) {
-            missingGlyphs.add(ch);
+            missingGlyphs.add(codepoint);
             return;
         }
 
@@ -117,10 +125,10 @@ public class TtfFontLoader implements IFontLoader {
         }
 
         if (uv == null) {
-            Constants.LOGGER.warn("Failed to place TTF glyph U+{} ({}x{}) into atlas", String.format("%04X", (int) ch), glyph.width(), glyph.height());
-            missingGlyphs.add(ch);
+            Constants.LOGGER.warn("Failed to place TTF glyph U+{} ({}x{}) into atlas", String.format("%04X", codepoint), glyph.width(), glyph.height());
+            missingGlyphs.add(codepoint);
         } else {
-            glyphMap.put(ch, new GlyphDescriptor(
+            glyphMap.put(codepoint, new GlyphDescriptor(
                     currentAtlas, uv,
                     glyph.width(), glyph.height(),
                     glyph.xOffset(), glyph.yOffset(),
@@ -139,8 +147,10 @@ public class TtfFontLoader implements IFontLoader {
 
     @Override
     public void checkAndLoadChars(String chars) {
-        for (final var ch : chars.toCharArray()) {
-            checkAndLoadChar(ch);
+        for (int i = 0; i < chars.length(); ) {
+            int codepoint = chars.codePointAt(i);
+            i += Character.charCount(codepoint);
+            checkAndLoadCodepoint(codepoint);
         }
     }
 
@@ -173,5 +183,9 @@ public class TtfFontLoader implements IFontLoader {
     @Override
     public GlyphDescriptor getGlyph(char ch) {
         return glyphMap.get(ch);
+    }
+
+    public GlyphDescriptor getGlyph(int codepoint) {
+        return glyphMap.get(codepoint);
     }
 }

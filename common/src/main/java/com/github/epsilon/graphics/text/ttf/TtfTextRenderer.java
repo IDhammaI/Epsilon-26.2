@@ -45,22 +45,23 @@ public class TtfTextRenderer implements ITextRenderer {
         float xOffset = 0f;
         float yOffset = 0f;
 
-        for (int i = 0; i < text.length(); i++) {
-            char ch = text.charAt(i);
-            if (ch == ' ') {
+        for (int i = 0; i < text.length(); ) {
+            int codepoint = text.codePointAt(i);
+            i += Character.charCount(codepoint);
+            if (codepoint == ' ') {
                 xOffset += 3.0f * scale;
                 continue;
             }
-            if (ch == '\n') {
+            if (codepoint == '\n') {
                 xOffset = 0f;
                 yOffset += fontLoader.fontFile.fontHeight * finalScale;
                 continue;
             }
 
-            GlyphDescriptor glyph = fontLoader.getGlyph(ch);
+            GlyphDescriptor glyph = fontLoader.getGlyph(codepoint);
             if (glyph == null) {
-                fontLoader.checkAndLoadChar(ch);
-                glyph = fontLoader.getGlyph(ch);
+                fontLoader.checkAndLoadCodepoint(codepoint);
+                glyph = fontLoader.getGlyph(codepoint);
             }
             if (glyph == null) continue;
 
@@ -151,14 +152,16 @@ public class TtfTextRenderer implements ITextRenderer {
         float maxLine = 0.0f;
         float currentLine = 0.0f;
 
-        for (char ch : text.toCharArray()) {
-            if (ch == ' ') {
+        for (int i = 0; i < text.length(); ) {
+            int codepoint = text.codePointAt(i);
+            i += Character.charCount(codepoint);
+            if (codepoint == ' ') {
                 currentLine += 3.0f * scale;
-            } else if (ch == '\n') {
+            } else if (codepoint == '\n') {
                 maxLine = Math.max(maxLine, currentLine);
                 currentLine = 0.0f;
             } else {
-                GlyphDescriptor glyph = fontLoader.getGlyph(ch);
+                GlyphDescriptor glyph = fontLoader.getGlyph(codepoint);
                 if (glyph != null) {
                     currentLine += glyph.advance() * finalScale + SPACING * scale;
                 }

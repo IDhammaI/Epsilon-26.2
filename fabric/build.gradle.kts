@@ -12,6 +12,9 @@ dependencies {
     implementation(libs.prism.rhi.core)
     runtimeOnly(libs.prism.rhi.backend.opengl41)
     runtimeOnly(libs.prism.rhi.backend.opengl.dsa)
+    include(libs.prism.rhi.core)
+    include(libs.prism.rhi.backend.opengl41)
+    include(libs.prism.rhi.backend.opengl.dsa)
     compileOnly(libs.sodium.fabric)
     compileOnly(libs.jsr305)
 }

@@ -47,13 +47,12 @@ public final class EpsilonFontMetrics {
         if (font == null) {
             return 0.0f;
         }
-        if (codepoint < Character.MIN_CODE_POINT || codepoint > Character.MAX_VALUE) {
+        if (codepoint < Character.MIN_CODE_POINT || codepoint > Character.MAX_CODE_POINT) {
             return 0.0f;
         }
 
-        char ch = (char) codepoint;
-        font.checkAndLoadChar(ch);
-        GlyphDescriptor descriptor = font.getGlyph(ch);
+        font.checkAndLoadCodepoint(codepoint);
+        GlyphDescriptor descriptor = font.getGlyph(codepoint);
         if (descriptor == null) {
             return 0.0f;
         }

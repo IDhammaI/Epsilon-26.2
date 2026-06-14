@@ -16,7 +16,7 @@ mixinextras = "0.5.3"
 asm = "9.8"
 jsr305 = "3.0.2"
 sodium = "0.8.12+mc26.1.2"
-prism-rhi = "1.0-SNAPSHOT"
+prism-rhi = "0.0.1"
 
 [libraries]
 minecraft = { module = "com.mojang:minecraft", version.ref = "project-minecraft" }

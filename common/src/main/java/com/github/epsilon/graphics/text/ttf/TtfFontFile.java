@@ -52,8 +52,8 @@ public class TtfFontFile {
 
     }
 
-    public synchronized TtfGlyph generateGlyph(char ch) {
-        final var glyphIndex = STBTruetype.stbtt_FindGlyphIndex(fontInfo, ch);
+    public synchronized TtfGlyph generateGlyph(int codepoint) {
+        final var glyphIndex = STBTruetype.stbtt_FindGlyphIndex(fontInfo, codepoint);
 
         byte onEdgeValue = (byte) 128;
         float pixelDistScale = (float) onEdgeValue / padding;

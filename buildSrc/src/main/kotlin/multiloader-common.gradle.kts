@@ -55,8 +55,24 @@ java {
 }
 
 repositories {
-    mavenLocal()
     mavenCentral()
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "GitHubPackagesPrismRHI"
+                url = uri("https://maven.pkg.github.com/slmpc/PrismRHI")
+                credentials {
+                    username = providers.gradleProperty("gpr.user")
+                        .orElse(providers.environmentVariable("GITHUB_ACTOR"))
+                        .getOrElse("github")
+                    password = providers.gradleProperty("gpr.key")
+                        .orElse(providers.environmentVariable("GITHUB_TOKEN"))
+                        .getOrElse("")
+                }
+            }
+        }
+        filter { includeGroup("com.github.slmpc.prismrhi") }
+    }
     exclusiveContent {
         forRepository {
             maven {
