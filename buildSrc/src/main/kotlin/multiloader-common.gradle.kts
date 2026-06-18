@@ -74,6 +74,17 @@ repositories {
         }
         filter { includeGroup("net.caffeinemc") }
     }
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "Fabric"
+                url = uri("https://maven.fabricmc.net")
+            }
+        }
+        filter {
+            includeGroupAndSubgroups("net.fabricmc")
+        }
+    }
 }
 
 val licenseFileName = "LICENSE_${modName}"
