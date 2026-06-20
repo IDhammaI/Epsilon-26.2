@@ -56,7 +56,7 @@ void main() {
     vec2 oneTexel = TexelSize;
     float softMode = modeMask(alpha0, -1.0);
 
-    if (centerCol.a != 0.0) {
+    if (centerCol.a > 0.01f) {
         fragColor = vec4(wave(gl_FragCoord.xy), fillAlpha);
     } else {
         float alphaOutline = 0.0;
